@@ -1,0 +1,91 @@
+
+name: Build AXIOM
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: axiom-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build AXIOM (Minecraft 1.21.11)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.2.1'
+
+      - name: Extract AXIOM source ZIP
+        shell: bash
+        run: |
+          ZIP_FILE="axiom-2.0.1-src.zip"
+
+          if [ ! -f "$ZIP_FILE" ]; then
+            echo "ERROR: $ZIP_FILE was not found."
+            exit 1
+          fi
+
+          mkdir -p axiom-source
+          unzip -q "$ZIP_FILE" -d axiom-source
+
+          echo "ZIP extracted successfully."
+
+      - name: Locate Gradle project
+        shell: bash
+        run: |
+          if [ -f "$GITHUB_WORKSPACE/build.gradle" ] || [ -f "$GITHUB_WORKSPACE/build.gradle.kts" ]; then
+            PROJECT_DIR="$GITHUB_WORKSPACE"
+          else
+            BUILD_FILE=$(find "$GITHUB_WORKSPACE/axiom-source" \
+              -type f \( -name build.gradle -o -name build.gradle.kts \) \
+              -print -quit)
+
+            if [ -z "$BUILD_FILE" ]; then
+              echo "ERROR: No Gradle build file found."
+              exit 1
+            fi
+
+            PROJECT_DIR=$(dirname "$BUILD_FILE")
+          fi
+
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          echo "Found project at: $PROJECT_DIR"
+
+      - name: Build and test
+        shell: bash
+        run: |
+          cd "$PROJECT_DIR"
+          gradle --no-daemon clean build
+
+      - name: Upload AXIOM JAR
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: AXIOM-2.0.1
+          path: |
+            axiom-source/**/build/libs/*.jar
+            build/libs/*.jar
+            !**/*-sources.jar
+          if-no-files-found: error
+          retention-days: 14
